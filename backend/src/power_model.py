@@ -17,9 +17,14 @@ def train_reference():
     evidence={'reference_rows':len(rows),'train_rows':len(train_x),'test_rows':len(test_x),'train_mae_kw':float(mean_absolute_error(train_y,model.predict(train_x))),'holdout_mae_kw':float(mean_absolute_error(test_y,model.predict(test_x))),'feature_importance':dict(zip(FEATURES,model.feature_importances_.tolist())),'random_state':42,'sha256':hashlib.sha256(raw).hexdigest(),'method':'RandomForestRegressor / 100 trees / max_depth 8'}
     return model,evidence
 
-def estimate(survey):
-    if survey.irradiance<350:raise ValueError('辐照低于350 W/m²，请在稳定光照下补测')
+def estimate_values(readings):
+    if readings['irradiance']<350:raise ValueError('辐照低于350 W/m²，请在稳定光照下补测')
     model,evidence=train_reference()
-    clean=max(0,float(model.predict([[getattr(survey,k) for k in FEATURES]])[0]))
-    loss=max(0,clean-survey.observed_kw)
+    if readings.get('reference_sha256') and readings['reference_sha256']!=evidence['sha256']:raise ValueError('清洁功率参考已变更，请重新受理估损')
+    clean=max(0,float(model.predict([[readings[k] for k in FEATURES]])[0]))
+    loss=max(0,clean-readings['observed_kw'])
     return clean,loss,evidence
+
+def estimate(survey):
+    readings={k:getattr(survey,k) for k in FEATURES};readings['observed_kw']=survey.observed_kw
+    return estimate_values(readings)

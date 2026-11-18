@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select
 from .models import ArrayBlock,SoilingSurvey,WashMission,Audit
+from .assessment_service import QUEUE as ASSESSMENT_QUEUE,accept_assessment
 
 def require(db,model,key,lock=False):
     query=select(model).where(model.id==key)
@@ -37,4 +38,7 @@ def queue_assessment(db,key,user,queue):
     if survey.state not in ['recorded','blocked']:raise HTTPException(409,'巡测已评估或已排程，请勿重复提交')
     block=require(db,ArrayBlock,survey.block_id,True)
     if block.cleaning_state=='washing':raise HTTPException(409,'该阵列清洗执行中，旧巡测不能再评估')
-    survey.state='evaluating';audit(db,user,f'评估积灰 {survey.code}');db.commit();queue.rpush('solar:assessment',str(survey.id));return survey
+    job=accept_assessment(db,survey,block,user);db.commit()
+    try:queue.rpush(ASSESSMENT_QUEUE,str(job.id))
+    except Exception:pass  # 送算失败不丢受理，恢复循环会找回补投
+    return survey

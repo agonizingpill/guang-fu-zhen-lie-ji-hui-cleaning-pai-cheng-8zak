@@ -1,5 +1,6 @@
-import {field} from '../store.js';import {safe,fixed} from '../utils.js';import {SURVEY_STATES,MISSION_STATES} from '../constants.js';
-export const badge=(value,type='survey')=>`<span class="badge ${safe(value)}">${safe((type==='mission'?MISSION_STATES:SURVEY_STATES)[value]||value)}</span>`;
+import {field} from '../store.js';import {safe,fixed} from '../utils.js';import {SURVEY_STATES,MISSION_STATES,JOB_STATES} from '../constants.js';
+const STATE_MAPS={survey:SURVEY_STATES,mission:MISSION_STATES,job:JOB_STATES};
+export const badge=(value,type='survey')=>`<span class="badge ${safe(value)}">${safe((STATE_MAPS[type]||SURVEY_STATES)[value]||value)}</span>`;
 export const lead=(section,title,text)=>`<section class="lead"><div><div class="kicker">QINGLING / ${section}</div><h1>${title}</h1><p>${text}</p></div><div class="issue">FIELD NOTE 017<br>2026 / 11 / 17<br>山地光伏 · 晴岭运维</div></section>`;
 export const blockName=id=>field.arrays.find(a=>a.id===id)?.name||'未知阵列';
 export const blockOptions=()=>field.arrays.map(a=>`<option value="${a.id}">${safe(a.code)} · ${safe(a.name)}</option>`).join('');

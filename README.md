@@ -28,7 +28,7 @@ docker compose up -d --build --wait
 ## 业务模块与状态
 
 1. **阵列与水量**：ArrayBlock持久化编号、分区、装机、坡度、面积及当前可用水量；分区图是示意图，不是测绘地图。清洗执行中禁止修改阵列规格或配额。
-2. **巡测与估损**：SoilingSurvey保存辐照、组件温度、无雨日、积灰目测、功率及装机/坡度快照。低于350W/m²禁止评估；评估后不覆盖原输入，修正需新巡测。
+2. **巡测与估损**：SoilingSurvey保存辐照、组件温度、无雨日、积灰目测、功率及装机/坡度快照。低于350W/m²禁止评估；评估后不覆盖原输入，修正需新巡测。受理估损即生成AssessmentJob并固定读数与清洁参考快照，断连、退出由worker找回续算，详见文末第四轮扩展。
 3. **损失优先序**：比较清洁参考功率与实测残差，按损失编制WashMission水量计划。建议水量=面积×0.6×(1+0.1×目测积灰)，单位L。草稿可超量保存作修订依据，但不能派工。
 4. **派工与复测**：主管派工时锁定任务、巡测、阵列行并核验预算与实际余水，扣减水量；mission=dispatched、survey=scheduled、array=washing。派工后水量不可修改。复测保存实际功率与当时辐照，以同辐照归一化计算增益；主管验收正增益后mission=accepted、survey=closed、array=ready并写last_cleaned。同阵列清洗前旧巡测变stale，其草稿任务变superseded，防止用旧积灰读数再次派工。
 
@@ -64,8 +64,8 @@ Seed按email、阵列code、巡测code自然键仅插入缺项，不覆盖用户
 Python3.12 / FastAPI / SQLAlchemy / PyMySQL / MySQL8 / Redis7 / scikit-learn1.6 / Nginx1.27。前端原生HTML/CSS/JS ES modules，无框架。
 
 - backend/src/models.py：三领域实体及审计/账号；schemas.py输入验证；array_routes、survey_routes、mission_routes为领域接口。
-- field_service.py：阵列规格/巡测规则、估损入队；wash_service.py：用水计划/事务派工/复测/验收联动；power_model.py：参考训练与评估；worker.py：估损消费与心跳；scripts/seed_demo.py幂等seed。
-- frontend/src/pages/：阵列图、巡测簿、损失与水量、派工复测及补给/复访六页；components/field.js复用阵列命名、巡测依据、水量账与状态。api.js、store.js、utils.js分离请求、领域状态、格式/时区/错误反馈。
+- field_service.py：阵列规格/巡测规则、估损受理入队；assessment_service.py：估损作业快照、认领、确认、补证与找回；wash_service.py：用水计划/事务派工/复测/验收联动；power_model.py：参考训练与评估；worker.py：估损消费、租约心跳与周期找回；scripts/seed_demo.py幂等seed。
+- frontend/src/pages/：阵列图、巡测簿、估损作业、损失与水量、派工复测及补给/复访/许可/废水/结算十页；components/field.js复用阵列命名、巡测依据、水量账与状态。api.js、store.js、utils.js分离请求、领域状态、格式/时区/错误反馈。
 - 角色、巡测状态、任务状态枚举分别在backend/src/constants.py、frontend/src/constants.js，角色值与账号一致。
 - app.py的trace与recover中间件负责耗时与全局可恢复错误；审计记录真实变更账号/动作/时间。UI显示Asia/Shanghai。
 
@@ -106,3 +106,16 @@ MIT，见LICENSE。
 新增代码按实体、输入约束、路由、许可/废水/结算职责及3个页面组织。历史v1与expansion证据保留，第三轮证据在test-artifacts/gb-1024/v3/。作业许可按日容量预留，不模拟逐分钟班次；本地废水联单不接环保系统，合同凭据不触发收付款。
 
 V3 已知范围补充：每任务一张作业许可；撤销为终止办理，需重新创建任务，当前不支持同任务重办许可。草稿许可可在签发前修订；撤销会释放班组容量。
+
+
+## 第四轮扩展：估损作业可靠性与恢复
+
+受理估损即保存 `AssessmentJob`（巡测唯一外键）：状态机 `queued→running→evidence_pending→done`，异常为 `failed` 并留失败原因。受理时把巡测读数、阵列面积与清洁参考文件SHA256固化为 `input_snapshot`，每次重算一律使用受理时快照；参考文件变更则判失败要求重新受理。训练MAE与独立留出MAE仍分开记录，不混作泛化指标。
+
+- **找回挂起**：worker每5秒扫描——已受理未送算（queued且不在队列，宽限5秒）补投；计算中退出（running心跳超60秒租约）收回为queued并换发尝试号重投；证据待补（evidence_pending）复用 `result_snapshot` 已确认计算补齐证据文件。
+- **幂等结果**：同一巡测只有一条作业，结果写回原巡测行、证据固定 `survey-{id}.json`（临时文件+原子改名），同次估损重试不新增结果行或文件；重复队列消息认领落空。
+- **并发栅栏**：认领、确认、失败回写均为带状态/办理者/尝试号的条件更新。并发接手只认可当前办理者；旧办理者晚回时更新落空，结果与证据文件都不得改写。
+- **齐备才可用**：数值确认后先入 `result_snapshot`，证据文件落盘才把巡测置 `assessed`；此前编制清洗计划一律409。证据写失败时巡测停在评估中、作业挂补证中，恢复后自动补齐放行。
+- **过期不复活**：清洗验收使旧巡测 stale 时，受理中/计算中/补证中的作业由找回循环判失败（原因留痕），补算不得把巡测恢复为可排程的 assessed，也不补写证据文件。
+
+新增 `GET /assessment-jobs` 供三角色查看；前端第10页“估损作业”展示待计算、计算中、补证中、已完成与失败原因，含受理快照、办理者、心跳与结果摘要。回归测试在源码外 `test-artifacts/gb-1024/v4/`：10项pytest（找回补投、断点恢复、幂等、快照口径、补证、栅栏、过期作废、失败重试）加一条真实worker循环端到端冒烟。

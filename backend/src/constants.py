@@ -18,3 +18,9 @@ class MissionState(StrEnum):
     RETESTED='retested'
     ACCEPTED='accepted'
     SUPERSEDED='superseded'
+class JobState(StrEnum):
+    QUEUED='queued'
+    RUNNING='running'
+    EVIDENCE_PENDING='evidence_pending'
+    DONE='done'
+    FAILED='failed'

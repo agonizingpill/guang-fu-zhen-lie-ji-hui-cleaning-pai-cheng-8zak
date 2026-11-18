@@ -1,29 +1,36 @@
-import os,time,json,traceback
+import os,time,socket,traceback
 from pathlib import Path
-from sqlalchemy import select
 import redis
 from .database import Session
-from .models import ArrayBlock,SoilingSurvey
-from .power_model import estimate
+from .models import AssessmentJob
+from .assessment_service import QUEUE,claim,compute_result,confirm_computation,write_evidence,finalize,fail_claimed,recover
 queue=redis.Redis.from_url(os.getenv('REDIS_URL','redis://redis:6379/0'),decode_responses=True)
+ME=f'{socket.gethostname()}:{os.getpid()}'
+last=0.0
 while True:
     Path('/tmp/solar-heartbeat').touch()
-    job=queue.blpop('solar:assessment',timeout=3)
-    if not job:continue
-    key=int(job[1])
+    if time.monotonic()-last>5:
+        try:
+            with Session() as db:recover(db,queue)
+        except Exception:traceback.print_exc()
+        last=time.monotonic()
+    message=queue.blpop(QUEUE,timeout=3)
+    if not message:continue
+    key=int(message[1])
     try:
         with Session() as db:
-            survey=db.scalar(select(SoilingSurvey).where(SoilingSurvey.id==key).with_for_update())
-            if not survey or survey.state!='evaluating':continue
-            block=db.get(ArrayBlock,survey.block_id)
-            clean,loss,evidence=estimate(survey)
-            survey.clean_kw=clean;survey.predicted_loss=loss;survey.model_evidence=evidence
-            survey.recommended_water=round(block.area_m2*.6*(1+.1*survey.dust),1)
-            survey.state='assessed';db.commit()
-            Path('/artifacts').mkdir(exist_ok=True)
-            Path(f'/artifacts/survey-{key}.json').write_text(json.dumps({'survey_id':key,'clean_kw':clean,'loss_kw':loss,'model':evidence}))
-    except Exception as error:
-        traceback.print_exc()
+            job=claim(db,key,ME)
+            if not job:continue
+            attempt,snapshot=job.attempt,job.input_snapshot
+        try:result=compute_result(snapshot)
+        except Exception as error:
+            traceback.print_exc()
+            with Session() as db:fail_claimed(db,key,ME,attempt,str(error))
+            continue
         with Session() as db:
-            survey=db.get(SoilingSurvey,key)
-            if survey:survey.state='blocked';survey.model_evidence={'error':str(error)};db.commit()
+            if not confirm_computation(db,key,ME,attempt,result):continue
+        try:write_evidence(result)
+        except OSError:
+            traceback.print_exc();continue  # 证据待补，恢复循环复用已确认计算补齐
+        with Session() as db:finalize(db,db.get(AssessmentJob,key))
+    except Exception:traceback.print_exc()

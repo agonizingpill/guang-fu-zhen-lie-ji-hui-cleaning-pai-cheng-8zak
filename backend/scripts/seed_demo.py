@@ -1,7 +1,7 @@
 from datetime import datetime,timedelta
 from sqlalchemy import select,func
 from src.database import Base,engine,Session
-from src.models import User,ArrayBlock,SoilingSurvey,WashMission
+from src.models import User,ArrayBlock,SoilingSurvey,WashMission,AssessmentJob
 from src.revisit_models import WaterDelivery,FollowupSurvey
 from src.auth import hash_password
 from src.operations_models import WashCrew
@@ -33,6 +33,10 @@ def seed():
         if not mission:
             mission=WashMission(survey_id=historical.id,water_liters=100,available_liters=700,status='accepted',post_kw=62,post_irradiance=800,normalized_kw=62,verified_gain=12,dispatched_at=datetime.utcnow()-timedelta(days=7),accepted_at=datetime.utcnow()-timedelta(days=7))
             db.add(mission);db.flush()
+        if not db.scalar(select(AssessmentJob).where(AssessmentJob.survey_id==historical.id)):
+            snapshot={'survey_id':historical.id,'survey_code':historical.code,'block_id':block.id,'block_code':block.code,'area_m2':block.area_m2,'capacity_kw':historical.capacity_kw,'slope':historical.slope,'irradiance':historical.irradiance,'module_temp':historical.module_temp,'rain_days':historical.rain_days,'dust':historical.dust,'observed_kw':historical.observed_kw,'reference_sha256':'历史估损，参考文件SHA见原证据'}
+            result={'survey_id':historical.id,'survey_code':historical.code,'clean_kw':62,'loss_kw':12,'recommended_water':100,'model':historical.model_evidence or {'note':'历史估损证据留存于原档案'},'inputs':snapshot}
+            db.add(AssessmentJob(survey_id=historical.id,state='done',attempt=1,handler='seed-history',input_snapshot=snapshot,result_snapshot=result,finished_at=datetime.utcnow()-timedelta(days=7)))
         if not db.scalar(select(FollowupSurvey).where(FollowupSurvey.mission_id==mission.id,FollowupSurvey.days_after==2)):
             db.add(FollowupSurvey(mission_id=mission.id,days_after=2,irradiance=800,observed_kw=61,normalized_kw=61,normalized_loss=100/62,state='stable',baseline_snapshot={'post_kw':62,'post_irradiance':800,'accepted_at':mission.accepted_at.isoformat(),'block_id':block.id,'block_code':block.code,'survey_id':historical.id,'survey_code':historical.code,'threshold_pct':5}))
         db.commit();print({key:db.scalar(select(func.count()).select_from(model)) for key,model in [('users',User),('blocks',ArrayBlock),('surveys',SoilingSurvey)]})

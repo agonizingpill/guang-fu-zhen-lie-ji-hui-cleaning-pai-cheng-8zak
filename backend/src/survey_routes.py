@@ -4,7 +4,7 @@ from fastapi import APIRouter,Depends
 from sqlalchemy import select
 from .database import session
 from .auth import current,editor
-from .models import SoilingSurvey
+from .models import SoilingSurvey,AssessmentJob
 from .schemas import SurveyInput
 from .field_service import record_survey,queue_assessment,require
 from .power_model import train_reference
@@ -18,5 +18,7 @@ def reading(key:int,user=Depends(current),db=Depends(session)):return require(db
 def record(body:SurveyInput,user=Depends(editor),db=Depends(session)):return record_survey(db,body,user)
 @router.post('/surveys/{key}/assess')
 def assess(key:int,user=Depends(editor),db=Depends(session)):return queue_assessment(db,key,user,queue)
+@router.get('/assessment-jobs')
+def jobs(user=Depends(current),db=Depends(session)):return db.scalars(select(AssessmentJob).order_by(AssessmentJob.id.desc())).all()
 @router.get('/power-reference')
 def evidence(user=Depends(current)):return train_reference()[1]

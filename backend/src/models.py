@@ -54,6 +54,20 @@ class WashMission(Base):
     verified_gain:Mapped[float|None]=mapped_column(Float,nullable=True)
     dispatched_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
     accepted_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+class AssessmentJob(Base):
+    __tablename__='assessment_jobs'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    survey_id:Mapped[int]=mapped_column(ForeignKey('soiling_surveys.id'),unique=True)
+    state:Mapped[str]=mapped_column(String(24),default='queued')
+    attempt:Mapped[int]=mapped_column(default=1)
+    handler:Mapped[str|None]=mapped_column(String(80),nullable=True)
+    input_snapshot:Mapped[dict|None]=mapped_column(JSON,nullable=True)
+    result_snapshot:Mapped[dict|None]=mapped_column(JSON,nullable=True)
+    error:Mapped[str|None]=mapped_column(String(400),nullable=True)
+    queued_at:Mapped[datetime]=mapped_column(DateTime,server_default=func.now())
+    started_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    heartbeat_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    finished_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
 class Audit(Base):
     __tablename__='audits'
     id:Mapped[int]=mapped_column(primary_key=True)
